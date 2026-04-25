@@ -361,7 +361,7 @@ static int irdma_connect_ctx(struct irdma_context *ctx, int port, int my_psn,
 
 	if (dest->gid.global.interface_id) {
 		attr.ah_attr.is_global = 1;
-		attr.ah_attr.grh.hop_limit = 1;
+		attr.ah_attr.grh.hop_limit = 64;  /* Support multi-hop cross-subnet routing */
 		attr.ah_attr.grh.dgid = dest->gid;
 		attr.ah_attr.grh.sgid_index = sgid_idx;
 	}

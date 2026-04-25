@@ -1,286 +1,163 @@
 # Troubleshooting
 
-## Common Errors
+## Quick Reference
 
-### "Failed to modify QP to RTR"
+| Error | Likely Cause | Quick Fix |
+|-------|-------------|-----------|
+| `errno=110 (ETIMEDOUT)` | Cross-subnet hop_limit or firewall | Use updated code + open UDP 4791 |
+| `errno=22 (EINVAL)` | Invalid GID index or MTU | Check `ibv_show_gid` + `-g` option |
+| `Failed to get quit message` | Client crashed earlier | Check client-side errors first |
+| `No IB devices found` | Hardware/driver issue | `modprobe rdma` + check `/dev/infiniband/` |
 
-**Symptoms**:
-- Client: `Failed to modify QP to RTR: errno=X (error message)`
-- Server: `Failed to get quit message` (blocked waiting for client)
+## Connection Errors
 
-**Root Cause**: QP state transition failed, client exits early without sending "quit" message.
+### errno=110 (Connection timed out)
 
-**Diagnosis Steps**:
+**Cross-subnet RoCEv2 (Most Common)**
 
-1. Check RDMA device type:
+Symptoms: Ping works, but RDMA connection fails across different subnets.
+
+Root cause: `hop_limit=1` (single hop) cannot route across subnets.
+
+**Fix**: Use updated code (hop_limit=64) + configure firewall:
+
 ```bash
-ibv_devinfo | grep link_layer
+# Open RoCEv2 UDP port (required!)
+iptables -I INPUT -p udp --dport 4791 -j ACCEPT
+iptables -I OUTPUT -p udp --dport 4791 -j ACCEPT
 ```
-- `InfiniBand` → Requires LID (auto-obtained)
-- `Ethernet` → RoCE, requires GID index
 
-2. For RoCE, specify GID index:
+**RoCEv2 supports cross-subnet routing** (UDP/IP based, port 4791).
+
+**GID Index (Required for RoCE)**
+
 ```bash
-# Check available GID indexes
+# Find GID containing your IP
 ibv_show_gid <device> <port>
 
-# Test with GID index
-Server: ./irdma_test -g <gid-index>
-Client: ./irdma_test -g <gid-index> server-host
+# Look for: ::ffff:192.168.x.x (IPv4-mapped GID)
+Server: ./irdma_test -g <index>
+Client: ./irdma_test -g <index> server-host
 ```
 
-3. Check MTU configuration:
+### errno=22 (Invalid parameter)
+
+Check GID index matches network:
 ```bash
-ibv_devinfo | grep mtu
-```
-Test with matching MTU:
-```bash
-./irdma_test -m <mtu>  # Options: 256, 512, 1024, 2048, 4096
-```
-
-**Common errno values**:
-- `EINVAL (22)` → Invalid parameter (check GID index, MTU)
-- `EOPNOTSUPP (95)` → Operation not supported by device
-- `ENOMEM (12)` → Memory allocation failure
-- `ETIMEDOUT (110)` → Connection timeout (see below)
-
-### errno=110 (ETIMEDOUT) - Connection timed out
-
-**Symptoms**: 
-- Client: `Failed to modify QP to RTR: errno=110 (Connection timed out)`
-- But ping works fine between servers
-
-**Root Cause**: RDMA connection layer timeout, TCP layer is fine but RDMA QP cannot establish connection.
-
-**Why ping works but RDMA fails**:
-- Ping tests IP layer connectivity
-- RDMA requires additional parameters: GID, LID, MTU, QP configuration
-
-**Critical: Check BOTH sides' errors**:
-The program flow is:
-1. Server accepts TCP connection → reads client QP params
-2. **Server tries to connect to client QP first** (check if server also reports error!)
-3. Server sends its QP params to client
-4. Client tries to connect to server QP
-
-**Diagnosis steps**:
-
-1. Check if server also reports error:
-```bash
-# Look for: "Server: Couldn't connect to client QP"
-# If server fails, client will also fail
-```
-
-2. For RoCE networks - MUST specify GID index:
-```bash
-# List GID indexes
-ibv_show_gid <device> <port>
-
-# Check which GID corresponds to your IP
-# GID contains IPv4/IPv6 address in lower 64 bits
-
-# Example output:
-# Index 0: fe80::... (link-local)
-# Index 1: ::ffff:192.168.1.100 (IPv4 mapped)
-# Index 2: 2001:... (IPv6)
-
-# Use IPv4-mapped GID for IPv4 networks
-Server: ./irdma_test -g <gid-index>
-Client: ./irdma_test -g <gid-index> server-host
-```
-
-3. Verify GID matches your network:
-```bash
-# Check GID index content
 ibv_query_gid <device> <port> <index>
-
-# Example: Check if GID matches server IP
-# If server IP is 192.168.1.100
-# GID should be: ::ffff:192.168.1.100
+# GID should contain your IP address
 ```
 
-4. Check MTU compatibility:
+Check MTU:
 ```bash
 ibv_devinfo | grep mtu
-# Client and server must use same MTU
-./irdma_test -m <mtu-value>
-```
-
-5. Check RDMA network configuration:
-```bash
-# For RoCEv2, check if switches support DSCP/ECN
-# For InfiniBand, check if subnet manager running
-
-# Verify RDMA traffic can flow
-ibtracert <server-ip>
-```
-
-**Most common fix**:
-```bash
-# RoCE networks: Always specify GID index
-Server: ./irdma_test -g 1  # or appropriate GID index
-Client: ./irdma_test -g 1 server-host
-
-# InfiniBand: Ensure subnet manager running
-opensm
+./irdma_test -m <mtu>  # 256/512/1024/2048/4096
 ```
 
 ### "Failed to get quit message"
 
-**Symptoms**: Server blocks waiting for "quit" message from client.
+Client crashed/exited early. Check client logs for real error.
 
-**Root Cause**: Client crashed or exited early (e.g., QP modification failure).
-
-**Solution**: Check client-side errors first. This error is typically a symptom of earlier client failure.
+## Device Errors
 
 ### "No IB devices found"
 
-**Symptoms**: `No IB devices found` error at startup.
-
-**Diagnosis**:
 ```bash
+# Load driver
+modprobe rdma
+
+# Check permissions
+ls -l /dev/infiniband/
+
+# Verify device
 ibv_devices
 ibv_devinfo
 ```
 
-**Possible causes**:
-- RDMA hardware not installed
-- RDMA driver not loaded
-- Device permissions issue
+### "Couldn't get local LID" (InfiniBand only)
 
-**Solution**:
 ```bash
-# Load RDMA modules
-modprobe rdma
-
-# Check device permissions
-ls -l /dev/infiniband/
+# Start subnet manager
+opensm
 ```
 
 ### "Huge page allocation failed"
 
-**Symptoms**: `Huge page allocation failed, falling back to normal memory`
+Auto-fallback to normal memory (performance may degrade).
 
-**Root Cause**: Huge pages not configured or insufficient.
+Force normal memory:
+```bash
+./irdma_test -o
+```
 
-**Solution**: Either:
-1. Configure huge pages (recommended for performance):
+Configure huge pages (better performance):
 ```bash
 echo 1024 > /proc/sys/vm/nr_hugepages
 mkdir -p /mnt/huge
 mount -t hugetlbfs nodev /mnt/huge
 ```
 
-2. Or use `-o` option to disable huge pages:
+## Network Types
+
+| Type | Requirements | Command |
+|------|-------------|---------|
+| InfiniBand | opensm running | `./irdma_test` (default) |
+| RoCEv2 | GID index + UDP 4791 firewall | `./irdma_test -g <index>` |
+| iWARP | Check device caps | `./irdma_test -m 1024` |
+
+**RoCEv1 vs RoCEv2**:
+- RoCEv1: L2 only, cannot cross subnet
+- RoCEv2: UDP/IP (port 4791), **can cross subnet**
+
+## Performance
+
+**Slow transfer**:
 ```bash
-./irdma_test -o
-```
-
-### "Couldn't get local LID"
-
-**Symptoms**: `Couldn't get local LID` error on InfiniBand network.
-
-**Root Cause**: InfiniBand subnet manager not running or SM not assigned LID.
-
-**Solution**:
-```bash
-# Check subnet manager
-opensm --version
-
-# Start subnet manager (if not running)
-opensm
-```
-
-## Network Type Configuration
-
-### InfiniBand
-
-Default configuration should work:
-```bash
-Server: ./irdma_test
-Client: ./irdma_test server-host
-```
-
-Requirements:
-- Subnet manager running (opensm)
-- LID automatically assigned
-
-### RoCE (RDMA over Converged Ethernet)
-
-Must specify GID index:
-```bash
-# Find correct GID index
-ibv_show_gid <device> <port>
-
-# Example: GID index 3
-Server: ./irdma_test -g 3
-Client: ./irdma_test -g 3 server-host
-```
-
-Requirements:
-- RoCE-capable NIC
-- Proper network configuration
-- Correct GID index for IPv4/IPv6
-
-### iWARP
-
-May require specific configuration:
-```bash
-# Check device capabilities
-ibv_devinfo
-
-# Use appropriate MTU
-./irdma_test -m 1024
-```
-
-## Debug Mode
-
-Enable debug output (requires modifying code):
-```bash
-# In irdma_test.c, line 52:
-static int debug = 1;  # Change from 0 to 1
-```
-
-Recompile:
-```bash
-make clean && make
-```
-
-## Performance Issues
-
-### Slow transfer speeds
-
-**Possible causes**:
-- Using normal memory instead of huge pages (check startup message)
-- Small buffer size (try larger `-s` value)
-- Single WQE per doorbell (try `-w` for doorbell optimization)
-
-**Solutions**:
-```bash
-# Use huge pages
-./irdma_test -s 1048576  # 1MB buffer
+# Larger buffer
+./irdma_test -s 1048576
 
 # Doorbell optimization
 ./irdma_test -w 16 -s 65536
+
+# Use huge pages (default, check startup message)
 ```
 
-### High latency
+**High latency**: Check MTU match, QoS (`-l`), network congestion.
 
-**Check**:
-- MTU setting matches network capability
-- Service level (`-l`) appropriate for QoS
-- Network congestion
-
-## Additional Debug Tools
+## Debug Tools
 
 ```bash
-# Monitor RDMA traffic
-ibtracert <destination>
+# GID info
+ibv_show_gid <dev> <port>
+ibv_query_gid <dev> <port> <idx>
 
-# Check RDMA statistics
+# Device status
+ibv_devinfo
+
+# Connectivity
+ibtracert <dest>
 ibqueryerrors
 
-# Verify connectivity
-rping -s -a <server-ip> -v
-rping -c -a <server-ip> -v
+# Basic RDMA ping
+rping -s -a <ip> -v   # server
+rping -c -a <ip> -v   # client
 ```
+
+## Firewall Configuration
+
+**RoCEv2 requires UDP port 4791**:
+
+```bash
+# iptables
+iptables -I INPUT -p udp --dport 4791 -j ACCEPT
+iptables -I OUTPUT -p udp --dport 4791 -j ACCEPT
+
+# ufw
+ufw allow 4791/udp
+
+# firewalld
+firewall-cmd --add-port=4791/udp --permanent
+firewall-cmd --reload
+```
+
+**InfiniBand**: No firewall configuration needed (L2 network).
