@@ -367,7 +367,9 @@ static int irdma_connect_ctx(struct irdma_context *ctx, int port, int my_psn,
 	}
 
 	if (ibv_modify_qp(ctx->qp, &attr, attr_mask)) {
-		fprintf(stderr, "Failed to modify QP to RTR\n");
+		fprintf(stderr, "Failed to modify QP to RTR: errno=%d (%s)\n", errno, strerror(errno));
+		fprintf(stderr, "QP state: dest_lid=%d, dest_qpn=%d, path_mtu=%d, sgid_idx=%d\n",
+			dest->lid, dest->qpn, mtu, sgid_idx);
 		return 1;
 	}
 
