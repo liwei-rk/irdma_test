@@ -42,6 +42,88 @@ Test with matching MTU:
 - `EINVAL (22)` → Invalid parameter (check GID index, MTU)
 - `EOPNOTSUPP (95)` → Operation not supported by device
 - `ENOMEM (12)` → Memory allocation failure
+- `ETIMEDOUT (110)` → Connection timeout (see below)
+
+### errno=110 (ETIMEDOUT) - Connection timed out
+
+**Symptoms**: 
+- Client: `Failed to modify QP to RTR: errno=110 (Connection timed out)`
+- But ping works fine between servers
+
+**Root Cause**: RDMA connection layer timeout, TCP layer is fine but RDMA QP cannot establish connection.
+
+**Why ping works but RDMA fails**:
+- Ping tests IP layer connectivity
+- RDMA requires additional parameters: GID, LID, MTU, QP configuration
+
+**Critical: Check BOTH sides' errors**:
+The program flow is:
+1. Server accepts TCP connection → reads client QP params
+2. **Server tries to connect to client QP first** (check if server also reports error!)
+3. Server sends its QP params to client
+4. Client tries to connect to server QP
+
+**Diagnosis steps**:
+
+1. Check if server also reports error:
+```bash
+# Look for: "Server: Couldn't connect to client QP"
+# If server fails, client will also fail
+```
+
+2. For RoCE networks - MUST specify GID index:
+```bash
+# List GID indexes
+ibv_show_gid <device> <port>
+
+# Check which GID corresponds to your IP
+# GID contains IPv4/IPv6 address in lower 64 bits
+
+# Example output:
+# Index 0: fe80::... (link-local)
+# Index 1: ::ffff:192.168.1.100 (IPv4 mapped)
+# Index 2: 2001:... (IPv6)
+
+# Use IPv4-mapped GID for IPv4 networks
+Server: ./irdma_test -g <gid-index>
+Client: ./irdma_test -g <gid-index> server-host
+```
+
+3. Verify GID matches your network:
+```bash
+# Check GID index content
+ibv_query_gid <device> <port> <index>
+
+# Example: Check if GID matches server IP
+# If server IP is 192.168.1.100
+# GID should be: ::ffff:192.168.1.100
+```
+
+4. Check MTU compatibility:
+```bash
+ibv_devinfo | grep mtu
+# Client and server must use same MTU
+./irdma_test -m <mtu-value>
+```
+
+5. Check RDMA network configuration:
+```bash
+# For RoCEv2, check if switches support DSCP/ECN
+# For InfiniBand, check if subnet manager running
+
+# Verify RDMA traffic can flow
+ibtracert <server-ip>
+```
+
+**Most common fix**:
+```bash
+# RoCE networks: Always specify GID index
+Server: ./irdma_test -g 1  # or appropriate GID index
+Client: ./irdma_test -g 1 server-host
+
+# InfiniBand: Ensure subnet manager running
+opensm
+```
 
 ### "Failed to get quit message"
 

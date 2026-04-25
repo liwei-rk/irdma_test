@@ -367,9 +367,18 @@ static int irdma_connect_ctx(struct irdma_context *ctx, int port, int my_psn,
 	}
 
 	if (ibv_modify_qp(ctx->qp, &attr, attr_mask)) {
-		fprintf(stderr, "Failed to modify QP to RTR: errno=%d (%s)\n", errno, strerror(errno));
-		fprintf(stderr, "QP state: dest_lid=%d, dest_qpn=%d, path_mtu=%d, sgid_idx=%d\n",
-			dest->lid, dest->qpn, mtu, sgid_idx);
+		int rc = errno;
+		fprintf(stderr, "Failed to modify QP to RTR: errno=%d (%s)\n", rc, strerror(rc));
+		fprintf(stderr, "QP params: dest_lid=0x%x, dest_qpn=0x%x, rq_psn=0x%x, path_mtu=%d, sgid_idx=%d\n",
+			dest->lid, dest->qpn, dest->psn, mtu, sgid_idx);
+		fprintf(stderr, "ah_attr: is_global=%d, dlid=0x%x, sl=%d, port_num=%d\n",
+			attr.ah_attr.is_global, attr.ah_attr.dlid, attr.ah_attr.sl, attr.ah_attr.port_num);
+		if (attr.ah_attr.is_global) {
+			char dgid_str[64];
+			inet_ntop(AF_INET6, &attr.ah_attr.grh.dgid, dgid_str, sizeof(dgid_str));
+			fprintf(stderr, "grh: dgid=%s, hop_limit=%d, sgid_index=%d\n",
+				dgid_str, attr.ah_attr.grh.hop_limit, attr.ah_attr.grh.sgid_index);
+		}
 		return 1;
 	}
 
@@ -550,11 +559,12 @@ static struct pingpong_dest *irdma_server_exch_dest(struct irdma_context *ctx,
 
 	if (irdma_connect_ctx(ctx, ib_port, my_dest->psn, mtu, sl, rem_dest,
 								sgid_idx)) {
-		fprintf(stderr, "Couldn't connect to remote QP\n");
+		fprintf(stderr, "Server: Couldn't connect to client QP\n");
 		free(rem_dest);
 		rem_dest = NULL;
 		goto out;
 	}
+	printf("Server: QP connected to client successfully\n");
 
 
 	gid_to_wire_gid(&my_dest->gid, gid);
@@ -1608,6 +1618,9 @@ int main(int argc, char *argv[])
 		if (irdma_connect_ctx(ctx, ib_port, my_dest.psn, mtu, sl, rem_dest,
 					gidx))
 			return 1;
+	
+	if (servername)
+		printf("Client: QP connected to server successfully\n");
 
 	irdma_print_buf_info(ctx);
 
