@@ -793,9 +793,15 @@ unmap_start_buffer:
 
 static int irdma_alloc_buffer(struct irdma_context *ctx)
 {
-	if (use_huge_page)
-		return irdma_alloc_hugepage_buffer(ctx);
-	else
+	if (use_huge_page) {
+		int ret = irdma_alloc_hugepage_buffer(ctx);
+		if (ret == -1) {
+			fprintf(stderr, "Huge page allocation failed, falling back to normal memory.\n");
+			use_huge_page = 0;
+			return irdma_alloc_common_buffer(ctx);
+		}
+		return ret;
+	} else
 		return irdma_alloc_common_buffer(ctx);
 }
 
@@ -817,8 +823,10 @@ static struct irdma_context *irdma_init_ctx(struct ibv_device *ib_dev, int size,
 	struct irdma_context *ctx;
 	int access_flags = IBV_ACCESS_LOCAL_WRITE |
 				 IBV_ACCESS_REMOTE_READ |
-				 IBV_ACCESS_REMOTE_WRITE |
-				 IBV_ACCESS_HUGETLB;
+				 IBV_ACCESS_REMOTE_WRITE;
+	
+	if (use_huge_page)
+		access_flags |= IBV_ACCESS_HUGETLB;
 
 	ctx = calloc(1, sizeof *ctx);
 	if (!ctx)
@@ -1338,7 +1346,7 @@ static void usage(const char *argv0)
 	printf("  -l, --sl=<sl>          service level value\n");
 	printf("  -e, --events           sleep on CQ events (default poll)\n");
 	printf("  -g, --gid-idx=<gid index> local port gid index\n");
-	printf("  -o, --odp		    use on demand paging\n");
+	printf("  -o, --odp		    disable huge pages, use normal memory\n");
 	printf("  -O, --iodp		    use implicit on demand paging\n");
 	printf("  -P, --prefetch	    prefetch an ODP MR\n");
 	printf("  -t, --ts	            get CQE with timestamp\n");
@@ -1469,6 +1477,10 @@ int main(int argc, char *argv[])
 
 		case 'g':
 			gidx = strtol(optarg, NULL, 0);
+			break;
+		
+		case 'o':
+			use_huge_page = 0;
 			break;
 		
 		case 'c':

@@ -6,7 +6,7 @@
 
 **Runtime requirements**:
 - RDMA hardware (InfiniBand/iWARP/RoCE device)
-- Huge pages: `/mnt/huge/` must be mounted and configured
+- Optional: Huge pages (`/mnt/huge/`) for better performance (auto-fallback to normal memory if unavailable)
 - Run as server: `./irdma_test` (waits for connection on port 18515)
 - Run as client: `./irdma_test <server-hostname>`
 
@@ -32,6 +32,7 @@ Client side: ./irdma_test <server-hostname>
 | `-l, --sl` | Service level | 0 |
 | `-g, --gid-idx` | GID index (for RoCE) | -1 |
 | `-b, --dest_ip` | Destination IP for hardware | none |
+| `-o, --odp` | Disable huge pages, use normal memory | disabled (use huge pages) |
 | `-c, --chk` | Validate buffer data after transfer | disabled |
 | `-a, --physical` | Use physical address instead of virtual | disabled |
 | `-e, --events` | Use event-based CQ polling | disabled (poll mode) |
