@@ -1,0 +1,5 @@
+irdma_test
+*.o
+core
+*.log
+/mnt/huge/*
